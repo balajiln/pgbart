@@ -4,14 +4,14 @@
 # Example usage: ./bart.py  --alpha_s 0.95 --beta_s 0.5 --k_bart 2 --dataset friedman-5 --m_bart 200 --n_iter 1000 --save 0 -v 0
 #
 # high level code:
-# for i in max_iterations:
+# for i in range(n_iterations):
 #     sample lambda_bart_i | T_{*, i-1}, M_{*, i-1} which is just a draw from gamma (or inverse gamma)
 #     for j in trees:
 #         sample T_{j,i} | (T_{j,i-1}, T_{1:j-1, i}, T_{j+1:J, i-1}, M_{1:j-1, i}, M_{j+1:J, i-1})    # M_{j, i} integrated out
 #         - get a single R_j that summarizes the current residual and use this as target
-#         - sample T_{j,i} using PG, Chipman or GrowPrune
+#         - sample T_{j,i} using PG, CGM or GrowPrune
 #         - PG: run conditional SMC and draw a single tree sample from the posterior 
-#         - Chipman: MCMC used in BART paper by Chipman et al.
+#         - CGM: MCMC used in BART paper by Chipman et al.
 #         - GrowPrune: use just grow and prune proposals
 #         sample M_{j,i} | (T_{j,i}, T_{1:j-1, i}, T_{j+1:J, i-1}, M_{1:j-1, i}, M_{j+1:J, i-1}) => sample M_{j,i} | T_{j,i} (due to independence structure)
 #         compute predictions of T_{j, i} on both 
@@ -159,11 +159,10 @@ def sample_param(p, settings, param, set_to_mean=False):
         p.pred_val_logprior += compute_normal_loglik(p.pred_val_n[node_id], param.mu_mean, param.mu_prec)
 
 
-def center_data(data, settings):
-    if settings.CENTER_Y:   #FIXME
-        data['y_train_mean'] = np.mean(data['y_train'])
-        data['y_train'] -= data['y_train_mean']
-        data['y_test'] -= data['y_train_mean']
+def center_labels(data, settings):
+    data['y_train_mean'] = np.mean(data['y_train'])
+    data['y_train'] -= data['y_train_mean']
+    data['y_test'] -= data['y_train_mean']
 
 
 def backup_target(data, settings):
@@ -176,11 +175,6 @@ def main():
     print 'Current settings:'
     pp.pprint(vars(settings))
 
-    CENTER_Y = settings.tag == 'center_y'
-    settings.CENTER_Y = CENTER_Y
-    if CENTER_Y:
-        print 'CENTER_Y = True; centering the y variables at mean(data[y_train])'
-
     # Resetting random seed
     np.random.seed(settings.init_id * 1000)
     random.seed(settings.init_id * 1000)
@@ -189,7 +183,9 @@ def main():
     print 'Loading data ...'
     data = load_data(settings)
     print 'Loading data ... completed'
-    center_data(data, settings)
+    if settings.center_y:
+        print 'center_y = True; centering the y variables at mean(data[y_train])'
+        center_labels(data, settings)
     backup_target(data, settings)
    
     #pre-compute & initialize

@@ -94,12 +94,14 @@ class empty(object):
 
 def parser_add_common_options():
     parser = optparse.OptionParser()
-    parser.add_option('--dataset', dest='dataset', default='toy',
-            help='name of the dataset  [default: %default]')
+    parser.add_option('--dataset', dest='dataset', default='toy-hypercube-3',
+            help='name of the dataset [default: %default]')
     parser.add_option('--data_path', dest='data_path', default='../../process_data/',
             help='path of the dataset [default: %default]')
     parser.add_option('--debug', dest='debug', default='0', type='int',
             help='debug or not? (0=False, 1=True) [default: %default]')
+    parser.add_option('--center_y', dest='center_y', default='0', type='int',
+            help='do you want to center y at mean of training labels? (0=False, 1=True) [default: %default]')
     parser.add_option('--op_dir', dest='op_dir', default='results', 
             help='output directory for pickle files (NOTE: make sure directory exists) [default: %default]')
     parser.add_option('--tag', dest='tag', default='', 
@@ -111,21 +113,22 @@ def parser_add_common_options():
     parser.add_option('--init_id', dest='init_id', default=1, type='int',
             help='init_id (changes random seed for multiple initializations) [default: %default]')
     parser.add_option('--sample_y', dest='sample_y', default=0, type='int',
-            help='do you want to sample the labels (successive conditional simulator in "Getting it right")? (1/0)')
+            help='do you want to sample the labels (successive conditional simulator in "Getting it right")? (1/0) [default: %default]')
     parser.add_option('--store_every_iteration', dest='store_every_iteration', default=0, type='int',
-            help='do you want to store predictions at every iteration and their performance measures? (1/0)')
-    parser.add_option('--n_iterations', dest='n_iterations', default=100, type='int',
-            help='number of MCMC iterations')
-    parser.add_option('--n_run_avg', dest='n_run_avg', default=250, type='int',
-            help='number of iterations after which the cumulative prediction is dumped out')
+            help='do you want to store predictions at every iteration and their performance measures? (1/0) [default: %default]')
+    parser.add_option('--n_iterations', dest='n_iterations', default=2000, type='int',
+            help='number of MCMC iterations [default: %default]')
+    parser.add_option('--n_run_avg', dest='n_run_avg', default=10, type='int',
+            help='number of iterations after which the cumulative prediction is dumped out [default: %default]')
     parser.add_option('--store_all_stats', dest='store_all_stats', default=0, type='int',
-            help='do you want to store all stats? (too much disk space) (1/0)')
+            help='do you want to store all stats? (might take too much disk space) (1/0) [default: %default]')
     return parser
 
 
 def parser_check_common_options(parser, settings):
     fail(parser, not(settings.save==0 or settings.save==1), 'save needs to be 0/1')
     fail(parser, not(settings.debug==0 or settings.debug==1), 'debug needs to be 0/1')
+    fail(parser, not(settings.center_y==0 or settings.center_y==1), 'center_y needs to be 0/1')
     fail(parser, settings.n_iterations < 1, 'number of iterations needs to be >= 1')
     fail(parser, not(settings.sample_y==0), 'sample_y needs to be 0')
     fail(parser, not(settings.store_every_iteration==0 or settings.store_every_iteration==1), 'store_every_iteration needs to be 0/1')
@@ -146,6 +149,8 @@ def parser_add_tree_prior_hyperparameter_options(parser):
             help='q_bart controls the prior over sigma^2 in BART [default: %default]')
     group.add_option('--m_bart', dest='m_bart', default=1, type='int',
             help='m_bart specifies the number of trees in BART [default: %default]')
+    group.add_option('--variance', dest='variance', default='unconditional',
+            help='which variance should you use for setting hyperparameters? (unconditional/leastsquares) [default: %default]')
     parser.add_option_group(group)
     return parser
 
@@ -157,6 +162,8 @@ def parser_check_tree_prior_hyperparameter_options(parser, settings):
     fail(parser, not(settings.k_bart > 0), 'k_bart needs to be > 0')
     fail(parser, not(settings.q_bart > 0), 'q_bart needs to be > 0')
     fail(parser, not(settings.m_bart > 0), 'm_bart needs to be > 0')
+    fail(parser, not((settings.variance == 'unconditional') or (settings.variance == 'leastsquares')), \
+            'variance needs to be unconditional or leastsquares')
 
 
 def parser_add_smc_options(parser):
@@ -192,12 +199,12 @@ def parser_check_smc_options(parser, settings):
 
 def parser_add_mcmc_options(parser):
     group = optparse.OptionGroup(parser, "MCMC options")
-    group.add_option('--mcmc_type', dest='mcmc_type', default='cgm',
-                      help='type of MCMC (cgm/growprune/pg)')
+    group.add_option('--mcmc_type', dest='mcmc_type', default='pg',
+                      help='type of MCMC (cgm/growprune/pg) [default: %default]')
     group.add_option('--init_pg', dest='init_pg', default='empty',
-                      help='type of init for Particle Gibbs (empty/smc)')
+                      help='type of init for Particle Gibbs (empty/smc) [default: %default]')
     group.add_option('--init_mcmc', dest='init_mcmc', default='empty',
-                      help='type of init for MCMC (empty/random)')
+                      help='type of init for MCMC (empty/random) [default: %default]')
     parser.add_option_group(group)
     return parser
 
@@ -459,19 +466,19 @@ class Param(object):
 
 
 def get_filename_bart(settings):
-    bart_spec = ''       # can modify this later to encode bart-specific settings
     param_str = 'bart-%s_%s_%s_%s' % (settings.alpha_bart, settings.k_bart, settings.q_bart, settings.m_bart)
     split_str = 'cgm-%s_%s' % (settings.alpha_split, settings.beta_split)
     if settings.mcmc_type == 'pg':
-        pg_settings = '-pg-C-%s-ess-%s-%s-%s-next-%s' % \
+        pg_settings = '-C-%s-ess-%s-%s-%s-nodewise-%s' % \
             (settings.n_particles, settings.ess_threshold, \
              settings.proposal, settings.resample, settings.init_pg)
     else:
         pg_settings = ''
-    filename = settings.op_dir + '/' + '%s-tree_prior-%s-param-%s-max_iter-%s' \
-            '-init_id-%s-mcmc-%s%s-sample_y-%d-bart_spec-%s-tag-%s.p' % \
+    filename = settings.op_dir + '/' + '%s-tree_prior-%s-param-%s-n_iter-%s' \
+            '-init_id-%s-mcmc-%s%s-sample_y-%d-center_y-%d-variance-%s-tag-%s.p' % \
             (settings.dataset, split_str, param_str, settings.n_iterations,\
-             settings.init_id, settings.mcmc_type, pg_settings, settings.sample_y, bart_spec, settings.tag)
+             settings.init_id, settings.mcmc_type, pg_settings, settings.sample_y, \
+             settings.center_y, settings.variance, settings.tag)
     return filename
 
 
@@ -1037,9 +1044,9 @@ def precompute(data, settings):
     print 'expected CI (for k_bart = %.3f) = (%.3f, %.3f)' % (param.k_bart, tmp_mean-tmp_stddev, tmp_mean+tmp_stddev)
     #
     # See section 2.2.4 in page 272 of BART paper for how these parameters are set
-    prec_unconditional = 1.0 / np.var(data['y_train'])    #FIXME: CGM sometimes use precision of linear regression rather than this unconditional precision
+    prec_unconditional = 1.0 / np.var(data['y_train'])
     print 'unconditional variance = %.3f, prec = %.3f' % (1.0 / prec_unconditional, prec_unconditional)
-    if settings.tag.endswith('use_ls_estimate'):
+    if settings.variance == "leastsquares":
         ls_coef, ls_sum_squared_residuals = linear_regression(data['x_train'], data['y_train'])
         ls_var = ls_sum_squared_residuals / (data['n_train'] - 1)
         prec = 1.0 / ls_var
@@ -1054,7 +1061,7 @@ def precompute(data, settings):
     # ensures that 1-gamcdf(prec; shape=alpha_bart, rate=beta_bart) \approx settings.q_bart 
     # i.e. all values of precision are higher than the unconditional variance of Y
     #param.lambda_bart = param.alpha_bart / param.beta_bart      #FIXME: better init? check sensitivity
-    if settings.tag.endswith('use_ls_estimate'):
+    if settings.variance == "leastsquares":
         param.lambda_bart = float(prec)
     else:
         param.lambda_bart = float(prec) * 2   # unconditional precision might be too pessimistic
